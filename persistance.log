@@ -1,2 +1,1 @@
-INFO:root:File copied to C:\Users\Victime 1\AppData\Roaming\Microsoft\Windows\UpdateService.exe
-ERROR:root:Error during persistence setup: (-2147352567, 'Exception occurred.', (0, None, '(10,8):StartBoundary:', None, 0, -2147216615), None)
+ERROR:root:Error during persistence setup: (-2147352567, 'Exception occurred.', (0, None, None, None, 0, -2147024891), None)
